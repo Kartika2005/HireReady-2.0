@@ -4,3 +4,5 @@ joblib
 pandas
 xgboost
 requests
+PyPDF2
+python-multipart
