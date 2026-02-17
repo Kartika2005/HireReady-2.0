@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import LoginPage from './pages/LoginPage';
 import ResultCard from './components/ResultCard';
 import './App.css';
 
 const API_URL = '/api/analyze-full-profile';
 
 export default function App() {
-  /* ── State ──────────────────────────────────────────────────────── */
+  /* ── Analyzer state ─────────────────────────────────────────────────── */
   const [resumeFile, setResumeFile] = useState(null);
   const [githubUsername, setGithubUsername] = useState('');
   const [leetcodeUsername, setLeetcodeUsername] = useState('');
@@ -13,7 +14,33 @@ export default function App() {
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
 
-  /* ── Handlers ───────────────────────────────────────────────────── */
+  /* ── Auth state ─────────────────────────────────────────────────────── */
+  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('user'));
+    } catch {
+      return null;
+    }
+  });
+
+  const isLoggedIn = !!token;
+
+  const handleLogin = (newToken, newUser) => {
+    setToken(newToken);
+    setUser(newUser);
+  };
+
+  const handleLogout = () => {
+    setToken('');
+    setUser(null);
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setResult(null); // Clear previous results
+    setResumeFile(null);
+  };
+
+  /* ── Handlers ───────────────────────────────────────────────────────── */
   const handleFileChange = (e) => {
     const file = e.target.files?.[0];
     if (file && file.type === 'application/pdf') {
@@ -30,13 +57,11 @@ export default function App() {
     setError('');
     setResult(null);
 
-    // ── Validate ───────────────────────────────────────────────────
     if (!resumeFile) {
       setError('Please upload your resume (PDF) before analyzing.');
       return;
     }
 
-    // ── Build form data ────────────────────────────────────────────
     const formData = new FormData();
     formData.append('resume', resumeFile);
     formData.append('github_username', githubUsername.trim());
@@ -47,8 +72,17 @@ export default function App() {
     try {
       const response = await fetch(API_URL, {
         method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
         body: formData,
       });
+
+      if (response.status === 401) {
+        // Token expired or invalid
+        handleLogout();
+        return;
+      }
 
       if (!response.ok) {
         const errBody = await response.text();
@@ -68,7 +102,7 @@ export default function App() {
     }
   };
 
-  /* ── Helpers ────────────────────────────────────────────────────── */
+  /* ── Helpers ────────────────────────────────────────────────────────── */
   const categoryColor = (cat) => {
     if (!cat) return 'green';
     const lower = cat.toLowerCase();
@@ -77,13 +111,26 @@ export default function App() {
     return 'red';
   };
 
-  /* ── Render ─────────────────────────────────────────────────────── */
+  /* ── If not logged in, show login page ──────────────────────────────── */
+  if (!isLoggedIn) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
+  /* ── Render ─────────────────────────────────────────────────────────── */
   return (
     <div className="app-container">
       {/* Header */}
       <header className="app-header">
         <h1>HireReady</h1>
         <p>AI-powered career readiness analysis</p>
+        <div className="user-bar">
+          <span className="user-greeting">
+            👋 {user?.name || user?.email || 'User'}
+          </span>
+          <button className="logout-btn" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
       </header>
 
       {/* Input form */}

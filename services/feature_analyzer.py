@@ -13,6 +13,7 @@ import re
 import logging
 from typing import Dict
 
+import os
 import requests
 
 logger = logging.getLogger(__name__)
@@ -357,13 +358,18 @@ def _fetch_all_repos(username: str, per_page: int = 100) -> list:
     all_repos: list = []
     page = 1
 
+    token = os.getenv("GITHUB_TOKEN")
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
     while True:
         url = f"{GITHUB_API_BASE}/users/{username}/repos"
         resp = requests.get(
             url,
             params={"per_page": per_page, "page": page, "type": "owner"},
             timeout=15,
-            headers={"Accept": "application/vnd.github.v3+json"},
+            headers=headers,
         )
         resp.raise_for_status()
         data = resp.json()
