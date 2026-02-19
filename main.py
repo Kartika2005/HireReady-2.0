@@ -10,11 +10,13 @@ import logging
 import json
 from PyPDF2 import PdfReader
 from sqlalchemy.orm.session import Session
+from typing import Optional, List
 
 from services.role_engine import rank_roles
 from services.feature_analyzer import build_complete_feature_vector
 from services.database import engine, get_db, Base
-from services.models import User, AnalysisResult
+from services.models import User, AnalysisResult, QuizResult
+from services.quiz_generator import generate_quiz_questions
 from services.auth import (
     hash_password,
     verify_password,
@@ -530,3 +532,100 @@ def analyze_student(data: StudentFeatures):
         "readiness_score": round(readiness, 2),
         "recommended_roles": top_roles
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUIZ ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class QuizGenerateRequest(BaseModel):
+    role: str
+    difficulty: str
+
+class QuizSubmitRequest(BaseModel):
+    role: str
+    difficulty: str
+    score: int
+    totalQuestions: int
+    answers: list # List of objects
+    resultId: Optional[str] = None
+
+@app.post("/api/quiz/generate")
+def generate_quiz_endpoint(
+    data: QuizGenerateRequest, 
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        questions = generate_quiz_questions(data.role, data.difficulty)
+        return {"questions": questions}
+    except ValueError as e:
+        logger.error("Quiz generation failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error("Quiz generation failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to generate quiz")
+
+@app.post("/api/quiz/submit")
+def submit_quiz_endpoint(
+    data: QuizSubmitRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Check if result_id is provided for retest (updates existing result)
+        if data.resultId:
+            result = db.query(QuizResult).filter(
+                QuizResult.id == data.resultId, 
+                QuizResult.user_id == current_user.id
+            ).first()
+            
+            if result:
+                result.role = data.role
+                result.difficulty = data.difficulty
+                result.score = data.score
+                result.total_questions = data.totalQuestions
+                result.answers = data.answers
+                # created_at remains the same, or we could update a updated_at field
+                db.commit()
+                db.refresh(result)
+                return {"message": "Quiz result updated successfully", "resultId": str(result.id)}
+        
+        # New submission
+        result = QuizResult(
+            user_id=current_user.id,
+            role=data.role,
+            difficulty=data.difficulty,
+            score=data.score,
+            total_questions=data.totalQuestions,
+            answers=data.answers
+        )
+        db.add(result)
+        db.commit()
+        db.refresh(result)
+        return {"message": "Quiz submitted successfully", "resultId": str(result.id)}
+    except Exception as e:
+        logger.error("Quiz submit failed: %s", e)
+        # db.rollback() # Handled by session usually but good practice
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/quiz/results")
+def get_quiz_results(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    results = db.query(QuizResult).filter(QuizResult.user_id == current_user.id).order_by(QuizResult.created_at.desc()).all()
+    return {"results": results}
+
+@app.get("/api/quiz/roles")
+def get_quiz_roles(current_user: User = Depends(get_current_user)):
+     roles = [
+        'Backend Developer', 'Frontend Developer', 'Full Stack Developer',
+        'ML Engineer', 'Data Scientist', 'Data Engineer',
+        'Java Developer', 'Python Developer', 'DevOps Engineer',
+        'Cloud Engineer', 'Mobile Developer', 'iOS Developer',
+        'Android Developer', 'QA / Test Engineer', 'Cybersecurity Analyst',
+        'AI Research Engineer', 'Game Developer', 'Blockchain Developer',
+        'Database Administrator', 'Systems Engineer', 'UI/UX Designer',
+    ]
+     return {"roles": roles}
+

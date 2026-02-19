@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import LoginPage from './pages/LoginPage';
 import ProfilePage from './pages/ProfilePage';
 import ResultCard from './components/ResultCard';
+import QuizPage from './pages/QuizPage';
 import './App.css';
 
 const API_BASE = '/api';
@@ -118,103 +119,102 @@ export default function App() {
   /* ── Render ─────────────────────────────────────────────────────── */
   return (
     <div className="app-container">
-      {/* Header */}
-      <header className="app-header">
-        <h1>HireReady</h1>
-        <p>AI-powered career readiness analysis</p>
-        <div className="user-bar">
-          <span className="user-greeting">
-            👋 {user?.name || user?.email || 'User'}
-          </span>
-          <button className="logout-btn" onClick={handleLogout}>
-            Logout
+      {/* Unified Navbar */}
+      <nav className="main-navbar">
+        <div className="nav-left">
+          <div className="nav-brand">HireReady</div>
+          <button
+            className={`nav-link ${activeTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            className={`nav-link ${activeTab === 'profile' ? 'active' : ''}`}
+            onClick={() => setActiveTab('profile')}
+          >
+            Profile
+          </button>
+          <button
+            className={`nav-link ${activeTab === 'quiz' ? 'active' : ''}`}
+            onClick={() => setActiveTab('quiz')}
+          >
+            Take Quizzes
           </button>
         </div>
-      </header>
-
-      {/* Tab Navigation */}
-      <nav className="tab-nav">
-        <button
-          className={`tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setActiveTab('dashboard')}
-        >
-          Dashboard
-        </button>
-        <button
-          className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`}
-          onClick={() => setActiveTab('profile')}
-        >
-          Profile
-        </button>
+        <div className="nav-right">
+          <span className="user-greeting">
+            Hello, {user?.name || user?.email || 'User'}
+          </span>
+        </div>
       </nav>
 
-      {/* ═══ Dashboard Tab ═══ */}
-      {activeTab === 'dashboard' && (
-        <div className="dashboard-view">
-          {loadingResult ? (
-            <div className="loading-state">Loading analysis...</div>
-          ) : result ? (
-            <div className="results-section">
-              {/* Score hero */}
-              <div className={`score-hero ${categoryColor(result.readiness_category)}`}>
-                <div className="score-label">Readiness Score</div>
-                <div className="score-value">{result.readiness_score}</div>
-                <span className={`category-badge ${categoryColor(result.readiness_category)}`}>
-                  {result.readiness_category}
-                </span>
-                <div className="features-used">
-                  Analysis based on your latest profile data
-                  <br />
-                  <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
-                    Updated: {new Date(result.created_at).toLocaleString()}
+      <main className="main-content">
+        {activeTab === 'dashboard' && (
+          <>
+            {loadingResult ? (
+              <div className="loading-container">
+                <div className="spinner-large"></div>
+                <p>Loading latest analysis...</p>
+              </div>
+            ) : result ? (
+              <div className="results-section">
+                {/* Score hero */}
+                <div className={`score-hero ${categoryColor(result.readiness_category)}`}>
+                  <div className="score-label">Readiness Score</div>
+                  <div className="score-value">{result.readiness_score}</div>
+                  <span className={`category-badge ${categoryColor(result.readiness_category)}`}>
+                    {result.readiness_category}
                   </span>
+                  <div className="features-used">
+                    Analysis based on your latest profile data
+                    <br />
+                    <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
+                      Updated: {new Date(result.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Recommended roles */}
+                {result.recommended_roles?.length > 0 && (
+                  <>
+                    <h3 className="roles-heading">Top Recommended Roles</h3>
+                    <div className="roles-grid">
+                      {result.recommended_roles.map((r, i) => (
+                        <ResultCard
+                          key={r.role}
+                          role={r.role}
+                          score={r.score}
+                          rank={i + 1}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="empty-dashboard">
+                <h2>Welcome to HireReady!</h2>
+                <p>You haven't run an analysis yet.</p>
+                <div className="empty-actions">
+                  <button className="primary-btn" onClick={() => setActiveTab('profile')}>
+                    Go to Profile
+                  </button>
                 </div>
               </div>
+            )}
+          </>
+        )}
 
-              {/* Recommended roles */}
-              {result.recommended_roles?.length > 0 && (
-                <>
-                  <h3 className="roles-heading">Top Recommended Roles</h3>
-                  <div className="roles-grid">
-                    {result.recommended_roles.map((r, i) => (
-                      <ResultCard
-                        key={r.role}
-                        role={r.role}
-                        score={r.score}
-                        rank={i + 1}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (
-            /* Empty State */
-            <div className="empty-dashboard">
-              <h2>Welcome to HireReady!</h2>
-              <p>
-                To get your AI readiness analysis, please set up your profile with your Resume and coding handles.
-              </p>
-              <button
-                className="analyze-btn"
-                onClick={() => setActiveTab('profile')}
-                style={{ maxWidth: '200px', margin: '1.5rem auto' }}
-              >
-                Go to Profile
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ═══ Profile Tab ═══ */}
-      {activeTab === 'profile' && (
-        <ProfilePage
-          token={token}
-          user={user}
-          onProfileUpdate={handleProfileUpdate}
-        />
-      )}
+        {activeTab === 'profile' && (
+          <ProfilePage
+            user={user}
+            onUpdate={handleProfileUpdate}
+            onLogout={handleLogout}
+          />
+        )}
+        {activeTab === 'quiz' && <QuizPage />}
+      </main>
     </div>
   );
 }

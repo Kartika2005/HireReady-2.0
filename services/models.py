@@ -9,7 +9,7 @@ Tables:
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, Float, Text, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Float, Text, DateTime, ForeignKey, JSON, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -34,6 +34,7 @@ class User(Base):
 
     # Relationship to analysis results
     analyses = relationship("AnalysisResult", back_populates="user")
+    quizzes = relationship("QuizResult", back_populates="user")
 
 
 class AnalysisResult(Base):
@@ -60,3 +61,28 @@ class AnalysisResult(Base):
 
     # Relationship back to user
     user = relationship("User", back_populates="analyses")
+
+
+class QuizResult(Base):
+    __tablename__ = "quiz_results"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role = Column(String(100), nullable=False)
+    difficulty = Column(String(50), default="Medium")
+    score = Column(Float, nullable=False)
+    total_questions = Column(Integer, nullable=False)
+    answers = Column(JSON, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    user = relationship("User", back_populates="quizzes")
+
+

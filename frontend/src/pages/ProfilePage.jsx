@@ -3,7 +3,7 @@ import './ProfilePage.css';
 
 const API_BASE = '/api';
 
-export default function ProfilePage({ token, user, onProfileUpdate }) {
+export default function ProfilePage({ token, user, onProfileUpdate, onLogout }) {
     const [name, setName] = useState(user?.name || '');
     const [githubUsername, setGithubUsername] = useState(user?.github_username || '');
     const [leetcodeUsername, setLeetcodeUsername] = useState(user?.leetcode_username || '');
@@ -151,6 +151,15 @@ export default function ProfilePage({ token, user, onProfileUpdate }) {
                     {saving ? 'Saving & Analyzing…' : 'Save & Analyze'}
                 </button>
             </form>
+
+            <div className="profile-footer" style={{ marginTop: '2rem', borderTop: '1px solid #333', paddingTop: '1rem' }}>
+                <button
+                    onClick={onLogout}
+                    className="logout-btn-profile"
+                >
+                    Logout
+                </button>
+            </div>
         </div>
     );
 }

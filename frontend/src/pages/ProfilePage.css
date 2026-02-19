@@ -123,7 +123,36 @@
     transform: translateY(-1px);
 }
 
+
 .save-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+/* Logout Button */
+.logout-btn-profile {
+    display: block;
+    width: 100%;
+    padding: 0.8rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #ff4d4d;
+    background: rgba(255, 77, 77, 0.05);
+    border: 1px solid rgba(255, 77, 77, 0.3);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: center;
+    margin-top: 0.5rem;
+}
+
+.logout-btn-profile:hover {
+    background: rgba(255, 77, 77, 0.15);
+    border-color: #ff4d4d;
+    transform: scale(1.02);
+    box-shadow: 0 4px 12px rgba(255, 77, 77, 0.15);
+}
+
+.logout-btn-profile:active {
+    transform: scale(0.98);
 }
