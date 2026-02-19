@@ -7,6 +7,7 @@ import pandas as pd
 import io
 import logging
 
+import json
 from PyPDF2 import PdfReader
 from sqlalchemy.orm.session import Session
 
@@ -119,7 +120,205 @@ def get_me(current_user: User = Depends(get_current_user)):
         "id": str(current_user.id),
         "name": current_user.name,
         "email": current_user.email,
+        "github_username": current_user.github_username or "",
+        "leetcode_username": current_user.leetcode_username or "",
+        "resume_filename": current_user.resume_filename or "",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPER: Analysis Pipeline
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_analysis_pipeline(
+    user: User,
+    db: Session,
+    resume_text: str = "",
+    github_username: str = "",
+    leetcode_username: str = "",
+):
+    """
+    Core logic to extract features, run model, and save result.
+    call this whenever profile details change.
+    """
+    # If no resume text provided, try to use saved
+    if not resume_text:
+        resume_text = user.resume_text or ""
+    
+    # If no usernames provided, use saved
+    if not github_username:
+        github_username = user.github_username or ""
+    if not leetcode_username:
+        leetcode_username = user.leetcode_username or ""
+
+    # 1. Extract feature vector
+    feature_vector = build_complete_feature_vector(
+        resume_text=resume_text,
+        github_username=github_username,
+        leetcode_username=leetcode_username,
+    )
+
+    # 2. Run readiness prediction
+    df = pd.DataFrame([feature_vector])
+    for col in feature_columns:
+        if col not in df.columns:
+            df[col] = 0
+    df = df[feature_columns]
+
+    raw_score = float(model.predict(df)[0])
+
+    # 3. Calibrate score
+    MODEL_MIN = 6.0
+    MODEL_MAX = 80.0
+    readiness = ((raw_score - MODEL_MIN) / (MODEL_MAX - MODEL_MIN)) * 100
+    readiness = max(0, min(100, readiness))
+    readiness = round(readiness, 2)
+
+    # 4. Categorise
+    if readiness >= 75:
+        category = "Placement Ready"
+    elif readiness >= 50:
+        category = "Almost Ready"
+    else:
+        category = "Needs Improvement"
+
+    # 5. Role ranking
+    top_roles = rank_roles(feature_vector, top_k=3)
+    role_list = [{"role": role, "score": round(score, 4)} for role, score in top_roles]
+
+    # 6. Save result
+    try:
+        analysis = AnalysisResult(
+            user_id=user.id,
+            resume_text_preview=resume_text[:200] if resume_text else "",
+            github_username=github_username,
+            leetcode_username=leetcode_username,
+            features=json.dumps(feature_vector) if isinstance(feature_vector, dict) else feature_vector, # Ensure JSON serializable
+            readiness_score=readiness,
+            readiness_category=category,
+            recommended_roles=role_list,
+        )
+        db.add(analysis)
+        db.commit()
+        db.refresh(analysis)
+        logger.info("Auto-analysis saved: %s", analysis.id)
+        return analysis
+    except Exception as exc:
+        logger.error("Failed to save analysis: %s", exc)
+        db.rollback()
+        return None
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PROFILE ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.put("/auth/profile")
+async def update_profile(
+    name: Optional[str] = Form(None),
+    github_username: Optional[str] = Form(None),
+    leetcode_username: Optional[str] = Form(None),
+    resume: UploadFile = File(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the current user's profile details."""
+    new_resume_text = None
+
+    if name is not None:
+        current_user.name = name.strip()
+    
+    if github_username is not None:
+        current_user.github_username = github_username.strip()
+
+    if leetcode_username is not None:
+        current_user.leetcode_username = leetcode_username.strip()
+
+    # Handle resume upload
+    if resume and resume.filename:
+        try:
+            filename = resume.filename
+            pdf_bytes = await resume.read() # Use await for async file read
+            
+            # Extract text using PyPDF2
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            text = ""
+            for page in reader.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n"
+            
+            # Save strictly necessary fields
+            current_user.resume_filename = filename
+            current_user.resume_text = text  # Store text for analysis
+            
+            new_resume_text = text
+            logger.info("Updated resume for user %s: %s", current_user.email, filename)
+        except Exception as e:
+            logger.error("Failed to process resume upload: %s", e)
+            raise HTTPException(status_code=400, detail="Invalid PDF file")
+
+    db.commit()
+    db.refresh(current_user)
+
+    # 3. Trigger Auto-Analysis
+    # We pass the NEW text if uploaded, otherwise None (helper uses saved)
+    latest_analysis = run_analysis_pipeline(
+        user=current_user,
+        db=db,
+        resume_text=new_resume_text if new_resume_text else None,
+        # Helper will fetch saved usernames from User object
+    )
+
+    return {
+        "user": {
+            "id": str(current_user.id),
+            "name": current_user.name,
+            "resume_filename": current_user.resume_filename,
+            "email": current_user.email,
+            "github_username": current_user.github_username,
+            "leetcode_username": current_user.leetcode_username,
+        },
+        "analysis": {
+            "status": "success",
+            "readiness_score": latest_analysis.readiness_score,
+            "readiness_category": latest_analysis.readiness_category,
+            "recommended_roles": latest_analysis.recommended_roles,
+            "total_features_used": len([v for v in (latest_analysis.features.values() if isinstance(latest_analysis.features, dict) else {}) if v > 0]),
+            "created_at": latest_analysis.created_at
+        } if latest_analysis else None
+    }
+
+
+@app.get("/analysis/latest")
+def get_latest_analysis(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get the most recent analysis result for the user."""
+    # Query AnalysisResult table
+    latest = (
+        db.query(AnalysisResult)
+        .filter(AnalysisResult.user_id == current_user.id)
+        .order_by(AnalysisResult.created_at.desc())
+        .first()
+    )
+
+    if not latest:
+        return {"status": "no_analysis"}
+
+    return {
+        "status": "success",
+        "readiness_score": latest.readiness_score,
+        "readiness_category": latest.readiness_category,
+        "recommended_roles": latest.recommended_roles,
+        "total_features_used": len([v for v in (latest.features.values() if isinstance(latest.features, dict) else {}) if v > 0]),
+        "created_at": latest.created_at
+    }
+
+
+# NOTE: analyze-full-profile is now deprecated/redundant effectively,
+# but can be kept as a direct tool if needed. 
+
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -153,7 +352,7 @@ def extract_features(data: FeatureExtractionRequest):
 
 @app.post("/analyze-full-profile")
 async def analyze_full_profile(
-    resume: UploadFile = File(...),
+    resume: Optional[UploadFile] = File(None),
     github_username: str = Form(""),
     leetcode_username: str = Form(""),
     current_user: User = Depends(get_current_user),
@@ -164,20 +363,27 @@ async def analyze_full_profile(
     multipart/form-data, extracts features, runs the readiness model,
     saves the result to Supabase, and returns a combined response.
 
+    If no resume is uploaded, uses the previously saved resume.
     Requires JWT authentication.
     """
-    # ── 1. Extract text from uploaded PDF ─────────────────────────────
+    # ── 1. Extract text from uploaded PDF (or use saved) ──────────────
     resume_text = ""
-    try:
-        contents = await resume.read()
-        reader = PdfReader(io.BytesIO(contents))
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                resume_text += page_text + "\n"
-    except Exception as exc:
-        logger.error("Failed to parse uploaded PDF: %s", exc)
-        # Continue with empty resume_text — features will default to 0
+    resume_filename = ""
+    if resume and resume.filename:
+        resume_filename = resume.filename
+        try:
+            contents = await resume.read()
+            reader = PdfReader(io.BytesIO(contents))
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    resume_text += page_text + "\n"
+        except Exception as exc:
+            logger.error("Failed to parse uploaded PDF: %s", exc)
+    elif current_user.resume_text:
+        # Fall back to saved resume
+        resume_text = current_user.resume_text
+        resume_filename = current_user.resume_filename or "saved_resume.pdf"
 
     # ── 2. Extract feature vector ─────────────────────────────────────
     feature_vector = build_complete_feature_vector(
@@ -193,8 +399,16 @@ async def analyze_full_profile(
             df[col] = 0
     df = df[feature_columns]
 
-    readiness = float(model.predict(df)[0])
-    readiness = round(max(0, min(100, readiness)), 2)
+    raw_score = float(model.predict(df)[0])
+
+    # ── 3b. Calibrate score ──────────────────────────────────────────
+    # The XGBoost model outputs in a compressed range (~6 to ~80).
+    # Normalize to a 0-100 scale for user-friendly display.
+    MODEL_MIN = 6.0    # model output when all features = 0
+    MODEL_MAX = 80.0   # model output when all features maxed
+    readiness = ((raw_score - MODEL_MIN) / (MODEL_MAX - MODEL_MIN)) * 100
+    readiness = max(0, min(100, readiness))  # clamp to 0-100
+    readiness = round(readiness, 2)
 
     # ── 4. Categorise readiness ───────────────────────────────────────
     if readiness >= 75:
@@ -221,6 +435,16 @@ async def analyze_full_profile(
             recommended_roles=role_list,
         )
         db.add(analysis)
+
+        # Auto-save usernames and resume to user profile
+        if github_username.strip() and not current_user.github_username:
+            current_user.github_username = github_username.strip()
+        if leetcode_username.strip() and not current_user.leetcode_username:
+            current_user.leetcode_username = leetcode_username.strip()
+        if resume_text and resume_filename:
+            current_user.resume_text = resume_text
+            current_user.resume_filename = resume_filename
+
         db.commit()
         logger.info("Saved analysis result %s for user %s", analysis.id, current_user.id)
     except Exception as exc:
@@ -292,9 +516,12 @@ def analyze_student(data: StudentFeatures):
 
     df = df[feature_columns]
 
-    # 1️⃣ Readiness Prediction
-    readiness = float(model.predict(df)[0])
-    readiness = round(max(0, min(100, readiness)), 2)
+    # 1️⃣ Readiness Prediction (with calibration)
+    raw_score = float(model.predict(df)[0])
+    MODEL_MIN = 6.0
+    MODEL_MAX = 80.0
+    readiness = ((raw_score - MODEL_MIN) / (MODEL_MAX - MODEL_MIN)) * 100
+    readiness = max(0, min(100, readiness))
 
     # 2️⃣ Role Ranking
     top_roles = rank_roles(data.features)

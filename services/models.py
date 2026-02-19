@@ -23,6 +23,10 @@ class User(Base):
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(Text, nullable=False)
+    github_username = Column(String(100), default="")
+    leetcode_username = Column(String(100), default="")
+    resume_filename = Column(String(255), default="")
+    resume_text = Column(Text, default="")
     created_at = Column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

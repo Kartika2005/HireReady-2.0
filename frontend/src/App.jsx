@@ -1,20 +1,20 @@
 import { useState, useEffect } from 'react';
 import LoginPage from './pages/LoginPage';
+import ProfilePage from './pages/ProfilePage';
 import ResultCard from './components/ResultCard';
 import './App.css';
 
-const API_URL = '/api/analyze-full-profile';
+const API_BASE = '/api';
 
 export default function App() {
-  /* ── Analyzer state ─────────────────────────────────────────────────── */
-  const [resumeFile, setResumeFile] = useState(null);
-  const [githubUsername, setGithubUsername] = useState('');
-  const [leetcodeUsername, setLeetcodeUsername] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [result, setResult] = useState(null);
+  /* ── Tab state ───────────────────────────────────────────────────── */
+  const [activeTab, setActiveTab] = useState('dashboard');
 
-  /* ── Auth state ─────────────────────────────────────────────────────── */
+  /* ── Analysis state ─────────────────────────────────────────────── */
+  const [result, setResult] = useState(null);
+  const [loadingResult, setLoadingResult] = useState(false);
+
+  /* ── Auth state ─────────────────────────────────────────────────── */
   const [token, setToken] = useState(localStorage.getItem('token') || '');
   const [user, setUser] = useState(() => {
     try {
@@ -26,6 +26,57 @@ export default function App() {
 
   const isLoggedIn = !!token;
 
+  /* ── Fetch profile & latest analysis on login ───────────────────── */
+  useEffect(() => {
+    if (!token) return;
+
+    const fetchData = async () => {
+      try {
+        // 1. Fetch User Profile
+        const profileResp = await fetch(`${API_BASE}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (profileResp.ok) {
+          const profile = await profileResp.json();
+          setUser(profile);
+          localStorage.setItem('user', JSON.stringify(profile));
+        } else if (profileResp.status === 401) {
+          handleLogout();
+          return;
+        }
+
+        // 2. Fetch Latest Analysis
+        fetchAnalysis();
+
+      } catch {
+        // Silently fail
+      }
+    };
+
+    fetchData();
+  }, [token]);
+
+  const fetchAnalysis = async () => {
+    setLoadingResult(true);
+    try {
+      const resp = await fetch(`${API_BASE}/analysis/latest`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.status === 'success') {
+          setResult(data);
+        } else {
+          setResult(null); // No analysis yet
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch analysis", e);
+    } finally {
+      setLoadingResult(false);
+    }
+  };
+
   const handleLogin = (newToken, newUser) => {
     setToken(newToken);
     setUser(newUser);
@@ -36,73 +87,21 @@ export default function App() {
     setUser(null);
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    setResult(null); // Clear previous results
-    setResumeFile(null);
-  };
-
-  /* ── Handlers ───────────────────────────────────────────────────────── */
-  const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file && file.type === 'application/pdf') {
-      setResumeFile(file);
-      setError('');
-    } else if (file) {
-      setError('Please upload a PDF file.');
-      setResumeFile(null);
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
     setResult(null);
+    setActiveTab('dashboard');
+  };
 
-    if (!resumeFile) {
-      setError('Please upload your resume (PDF) before analyzing.');
-      return;
-    }
+  const handleProfileUpdate = (updatedUser, newAnalysis) => {
+    setUser(updatedUser);
+    localStorage.setItem('user', JSON.stringify(updatedUser));
 
-    const formData = new FormData();
-    formData.append('resume', resumeFile);
-    formData.append('github_username', githubUsername.trim());
-    formData.append('leetcode_username', leetcodeUsername.trim());
-
-    setLoading(true);
-
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      });
-
-      if (response.status === 401) {
-        // Token expired or invalid
-        handleLogout();
-        return;
-      }
-
-      if (!response.ok) {
-        const errBody = await response.text();
-        throw new Error(errBody || `Server error (${response.status})`);
-      }
-
-      const data = await response.json();
-      setResult(data);
-    } catch (err) {
-      if (err.name === 'TypeError') {
-        setError('Network error — is the backend running?');
-      } else {
-        setError(err.message || 'Something went wrong. Please try again.');
-      }
-    } finally {
-      setLoading(false);
+    // If the profile update triggered a new analysis, update state immediately
+    if (newAnalysis) {
+      setResult(newAnalysis);
     }
   };
 
-  /* ── Helpers ────────────────────────────────────────────────────────── */
+  /* ── Helpers ────────────────────────────────────────────────────── */
   const categoryColor = (cat) => {
     if (!cat) return 'green';
     const lower = cat.toLowerCase();
@@ -111,12 +110,12 @@ export default function App() {
     return 'red';
   };
 
-  /* ── If not logged in, show login page ──────────────────────────────── */
+  /* ── If not logged in, show login page ──────────────────────────── */
   if (!isLoggedIn) {
     return <LoginPage onLogin={handleLogin} />;
   }
 
-  /* ── Render ─────────────────────────────────────────────────────────── */
+  /* ── Render ─────────────────────────────────────────────────────── */
   return (
     <div className="app-container">
       {/* Header */}
@@ -133,102 +132,88 @@ export default function App() {
         </div>
       </header>
 
-      {/* Input form */}
-      <form className="form-card" onSubmit={handleSubmit}>
-        <h2>Analyze Your Profile</h2>
-
-        {/* Resume upload */}
-        <div className="form-group">
-          <label htmlFor="resume">Resume (PDF)</label>
-          <div className={`file-upload-area ${resumeFile ? 'has-file' : ''}`}>
-            <input
-              id="resume"
-              type="file"
-              accept="application/pdf"
-              onChange={handleFileChange}
-            />
-            <div className="file-upload-icon">
-              {resumeFile ? '✅' : '📄'}
-            </div>
-            <div className="file-upload-text">
-              {resumeFile ? 'File selected' : 'Click or drag to upload PDF'}
-            </div>
-            {resumeFile && (
-              <div className="file-upload-name">{resumeFile.name}</div>
-            )}
-          </div>
-        </div>
-
-        {/* GitHub */}
-        <div className="form-group">
-          <label htmlFor="github">GitHub Username</label>
-          <input
-            id="github"
-            type="text"
-            placeholder="e.g. octocat"
-            value={githubUsername}
-            onChange={(e) => setGithubUsername(e.target.value)}
-          />
-        </div>
-
-        {/* LeetCode */}
-        <div className="form-group">
-          <label htmlFor="leetcode">LeetCode Username</label>
-          <input
-            id="leetcode"
-            type="text"
-            placeholder="e.g. leetcoder123"
-            value={leetcodeUsername}
-            onChange={(e) => setLeetcodeUsername(e.target.value)}
-          />
-        </div>
-
-        {/* Submit */}
+      {/* Tab Navigation */}
+      <nav className="tab-nav">
         <button
-          type="submit"
-          className="analyze-btn"
-          disabled={loading}
+          className={`tab-btn ${activeTab === 'dashboard' ? 'active' : ''}`}
+          onClick={() => setActiveTab('dashboard')}
         >
-          {loading && <span className="spinner" />}
-          {loading ? 'Analyzing…' : 'Analyze Profile'}
+          Dashboard
         </button>
-      </form>
+        <button
+          className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`}
+          onClick={() => setActiveTab('profile')}
+        >
+          Profile
+        </button>
+      </nav>
 
-      {/* Error */}
-      {error && <div className="error-banner">{error}</div>}
-
-      {/* Results */}
-      {result && (
-        <div className="results-section">
-          {/* Score hero */}
-          <div className={`score-hero ${categoryColor(result.readiness_category)}`}>
-            <div className="score-label">Readiness Score</div>
-            <div className="score-value">{result.readiness_score}</div>
-            <span className={`category-badge ${categoryColor(result.readiness_category)}`}>
-              {result.readiness_category}
-            </span>
-            <div className="features-used">
-              Based on <span>{result.total_features_used}</span> features analyzed
-            </div>
-          </div>
-
-          {/* Recommended roles */}
-          {result.recommended_roles?.length > 0 && (
-            <>
-              <h3 className="roles-heading">Top Recommended Roles</h3>
-              <div className="roles-grid">
-                {result.recommended_roles.map((r, i) => (
-                  <ResultCard
-                    key={r.role}
-                    role={r.role}
-                    score={r.score}
-                    rank={i + 1}
-                  />
-                ))}
+      {/* ═══ Dashboard Tab ═══ */}
+      {activeTab === 'dashboard' && (
+        <div className="dashboard-view">
+          {loadingResult ? (
+            <div className="loading-state">Loading analysis...</div>
+          ) : result ? (
+            <div className="results-section">
+              {/* Score hero */}
+              <div className={`score-hero ${categoryColor(result.readiness_category)}`}>
+                <div className="score-label">Readiness Score</div>
+                <div className="score-value">{result.readiness_score}</div>
+                <span className={`category-badge ${categoryColor(result.readiness_category)}`}>
+                  {result.readiness_category}
+                </span>
+                <div className="features-used">
+                  Analysis based on your latest profile data
+                  <br />
+                  <span style={{ fontSize: '0.8rem', opacity: 0.7 }}>
+                    Updated: {new Date(result.created_at).toLocaleString()}
+                  </span>
+                </div>
               </div>
-            </>
+
+              {/* Recommended roles */}
+              {result.recommended_roles?.length > 0 && (
+                <>
+                  <h3 className="roles-heading">Top Recommended Roles</h3>
+                  <div className="roles-grid">
+                    {result.recommended_roles.map((r, i) => (
+                      <ResultCard
+                        key={r.role}
+                        role={r.role}
+                        score={r.score}
+                        rank={i + 1}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            /* Empty State */
+            <div className="empty-dashboard">
+              <h2>Welcome to HireReady!</h2>
+              <p>
+                To get your AI readiness analysis, please set up your profile with your Resume and coding handles.
+              </p>
+              <button
+                className="analyze-btn"
+                onClick={() => setActiveTab('profile')}
+                style={{ maxWidth: '200px', margin: '1.5rem auto' }}
+              >
+                Go to Profile
+              </button>
+            </div>
           )}
         </div>
+      )}
+
+      {/* ═══ Profile Tab ═══ */}
+      {activeTab === 'profile' && (
+        <ProfilePage
+          token={token}
+          user={user}
+          onProfileUpdate={handleProfileUpdate}
+        />
       )}
     </div>
   );

@@ -9,13 +9,17 @@ def _normalize(value, max_val):
 # Weights: skills (binary match), internship (binary), projects (numeric), github/leetcode (numeric)
 ROLE_DEFINITIONS = {
     # ── Web Development ───────────────────────────────────────────────────────
+    "Software Engineer": {
+        "required": ["Python", "Java", "C++", "JavaScript", "SQL", "Git", "DSA", "OOPS"],
+        "weights": {"skills": 0.35, "internship": 0.20, "projects": 0.25, "leetcode": 0.20}
+    },
     "Backend Developer": {
-        "required": ["Java", "Spring", "Node", "Django", "Flask", "Go", "Rust", "SQL"],
+        "required": ["Java", "Python", "JavaScript", "Spring", "Node", "Django", "Flask", "FastAPI", "Express", "SQL"],
         "weights": {"skills": 0.50, "internship": 0.20, "projects": 0.15, "github": 0.15}
     },
     "Frontend Developer": {
         "required": ["React", "Angular", "Vue", "NextJS", "HTML", "CSS", "JavaScript", "TypeScript"],
-        "weights": {"skills": 0.60, "internship": 0.10, "projects": 0.20, "github": 0.10}
+        "weights": {"skills": 0.50, "internship": 0.10, "projects": 0.20, "github": 0.10}
     },
     "Full Stack Developer": {
         "required": ["React", "Node", "JavaScript", "SQL", "Django", "Spring"],
@@ -25,19 +29,19 @@ ROLE_DEFINITIONS = {
     # ── Data & AI ─────────────────────────────────────────────────────────────
     "Data Scientist": {
         "required": ["Python", "Pandas", "Scikit", "SQL", "NLP", "TensorFlow", "PyTorch"],
-        "weights": {"skills": 0.50, "internship": 0.15, "projects": 0.20, "leetcode": 0.15}
+        "weights": {"skills": 0.35, "internship": 0.15, "projects": 0.40, "leetcode": 0.10}
     },
     "ML Engineer": {
-        "required": ["TensorFlow", "PyTorch", "Scikit", "Pandas", "ComputerVision", "NLP"],
-        "weights": {"skills": 0.50, "internship": 0.20, "projects": 0.20, "leetcode": 0.10}
+        "required": ["Python", "TensorFlow", "PyTorch", "Scikit", "Pandas", "ComputerVision", "NLP"],
+        "weights": {"skills": 0.35, "internship": 0.20, "projects": 0.40, "leetcode": 0.05}
     },
     "AI Engineer": {
-        "required": ["TensorFlow", "PyTorch", "LLM", "PromptEngineering", "Scikit"],
-        "weights": {"skills": 0.50, "internship": 0.20, "projects": 0.20, "github": 0.10}
+        "required": ["Python", "TensorFlow", "PyTorch", "LLM", "PromptEngineering", "Scikit"],
+        "weights": {"skills": 0.35, "internship": 0.20, "projects": 0.40, "github": 0.05}
     },
     "Data Engineer": {
         "required": ["SQL", "Python", "Pandas", "AWS", "Azure", "GCP", "Spark", "Hadoop"],
-        "weights": {"skills": 0.50, "internship": 0.20, "projects": 0.20, "github": 0.10}
+        "weights": {"skills": 0.35, "internship": 0.20, "projects": 0.40, "github": 0.05}
     },
 
     # ── Mobile ────────────────────────────────────────────────────────────────
@@ -99,19 +103,26 @@ def rank_roles(user_features, top_k=3):
         required = config["required"]
 
         # 1. Skills Calculation (diminishing returns)
-        # 6 relevant skills = 100% of skill weight (was 5)
+        # Frontend requires 8 skills for max score (stricter)
+        # Software Engineer requires 8 (broad)
+        # Others require 6
+        denom = 8.0 if role in ["Frontend Developer", "Software Engineer"] else 6.0
         matches = sum(1 for s in required if user_features.get(s, 0) > 0)
-        skill_score = min(matches / 6.0, 1.0)
+        skill_score = min(matches / denom, 1.0)
         score += skill_score * weights.get("skills", 0)
 
         # 2. Key Internship Matching
         intern_score = 0
-        if role in ["Backend Developer", "Full Stack Developer", "Java Developer", "Python Developer", "Game Developer", "Blockchain Developer"]:
+        if role in ["Software Engineer", "Backend Developer", "Full Stack Developer", "Java Developer", "Python Developer", "Game Developer", "Blockchain Developer"]:
             intern_score = user_features.get("internship_backend", 0)
         elif role in ["Frontend Developer", "QA Engineer"]:
             intern_score = max(user_features.get("internship_backend", 0), user_features.get("internship_mobile", 0)) 
         elif role in ["Data Scientist", "ML Engineer", "AI Engineer", "Data Engineer"]:
-            intern_score = max(user_features.get("internship_ai", 0), user_features.get("internship_data", 0))
+            # Allow generic backend internship to count for 80% credit for AI roles
+            # (Significant overlap in engineering practices)
+            ai_intern = max(user_features.get("internship_ai", 0), user_features.get("internship_data", 0))
+            backend_intern = user_features.get("internship_backend", 0) * 0.8
+            intern_score = max(ai_intern, backend_intern)
         elif role in ["Mobile Developer", "Android Developer"]:
             intern_score = user_features.get("internship_mobile", 0)
         elif role in ["DevOps Engineer", "Cloud Engineer"]:
@@ -122,7 +133,7 @@ def rank_roles(user_features, top_k=3):
         score += min(intern_score, 1) * weights.get("internship", 0)
 
         # 3. Project Count Normalization
-        # 8 relevant projects = 100% of project weight (was 5)
+        # 4 relevant projects = 100% of project weight (was 8)
         proj_count = 0
         if role in ["Backend Developer", "Full Stack Developer", "Java Developer", "Python Developer", "Game Developer", "Blockchain Developer"]:
             proj_count = user_features.get("num_backend_projects", 0)
@@ -137,7 +148,7 @@ def rank_roles(user_features, top_k=3):
         elif role == "Cybersecurity Analyst":
             proj_count = user_features.get("num_security_projects", 0)
 
-        proj_score = min(proj_count / 8.0, 1.0)
+        proj_score = min(proj_count / 4.0, 1.0)
         score += proj_score * weights.get("projects", 0)
 
         # 4. Technical Assessment (GitHub or LeetCode)

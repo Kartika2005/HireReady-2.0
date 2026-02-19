@@ -104,14 +104,19 @@ _SKILL_PATTERNS: Dict[str, list] = {
     "CSS":               [r"\bcss3?\b", r"\bsass\b", r"\bscss\b"],
 
     # ── ML / AI ──────────────────────────────────────────────────────────
-    "TensorFlow":        [r"\btensorflow\b", r"\btf\b"],
-    "PyTorch":           [r"\bpytorch\b"],
-    "Scikit":            [r"\bscikit[\s\-]?learn\b", r"\bsklearn\b", r"\bscikit\b"],
-    "Pandas":            [r"\bpandas\b"],
-    "NLP":               [r"\bnlp\b", r"\bnatural\s+language\s+processing\b"],
-    "ComputerVision":    [r"\bcomputer\s*vision\b", r"\bcv\b", r"\bopencv\b"],
-    "LLM":               [r"\bllm\b", r"\blarge\s+language\s+model\b"],
-    "PromptEngineering": [r"\bprompt\s*engineering\b"],
+    "TensorFlow":        [r"\btensorflow\b", r"\btf\b", r"\bkeras\b"],
+    "PyTorch":           [r"\bpytorch\b", r"\btorch\b"],
+    "Scikit":            [r"\bscikit[\s\-]?learn\b", r"\bsklearn\b", r"\bscikit\b", r"\bxboost\b", r"\blgbm\b"],
+    "Pandas":            [r"\bpandas\b", r"\bnumpy\b", r"\bmatplotlib\b", r"\bseaborn\b"],
+    "NLP":               [r"\bnlp\b", r"\bnatural\s+language\s+processing\b", r"\bspacy\b", r"\bnltk\b", r"\btransformers\b", r"\bhugging\s*face\b"],
+    "ComputerVision":    [r"\bcomputer\s*vision\b", r"\bcv\b", r"\bopencv\b", r"\byolo\b"],
+    "LLM":               [r"\bllm\b", r"\blarge\s+language\s+model\b", r"\bgpt\b", r"\bert\b", r"\bllama\b", r"\bgenerative\s+ai\b", r"\bgenai\b"],
+    "PromptEngineering": [r"\bprompt\s*engineering\b", r"\bprompt\s*design\b"],
+
+    # ── General / Core ───────────────────────────────────────────────────
+    "Git":              [r"\bgit\b", r"\bgithub\b", r"\bbitbucket\b", r"\bgitlab\b"],
+    "DSA":              [r"\bdsa\b", r"\badd\b", r"\balgorithms\b", r"\bdata\s*structures\b", r"\bleetcode\b", r"\bhackerrank\b"],
+    "OOPS":             [r"\boops\b", r"\bobject[\s\-]oriented\b", r"\bdesign\s*patterns\b"],
 
     # ── Cloud / DevOps ───────────────────────────────────────────────────
     "AWS":               [r"\baws\b", r"\bamazon\s+web\s+services\b"],
@@ -144,8 +149,10 @@ _SKILL_PATTERNS: Dict[str, list] = {
 
 # Internship domain keywords → feature column
 _INTERNSHIP_PATTERNS: Dict[str, list] = {
+    # Broadened to include Frontend/Web for "Web Development" coverage
     "internship_backend":  [r"\bbackend\b", r"\bback[\s\-]end\b", r"\bserver[\s\-]side\b",
-                            r"\bfull[\s\-]?stack\b", r"\bweb\s+develop\b"],
+                            r"\bfull[\s\-]?stack\b", r"\bweb\s+develop\b",
+                            r"\bfrontend\b", r"\bfront[\s\-]end\b", r"\bui\s*/\s*ux\b"],
     "internship_ai":       [r"\bai\b", r"\bartificial\s+intelligence\b",
                             r"\bmachine\s+learning\b", r"\bml\b", r"\bdata\s+science\b",
                             r"\bdeep\s+learning\b"],
@@ -161,8 +168,11 @@ _INTERNSHIP_PATTERNS: Dict[str, list] = {
 
 # Project domain keywords → feature column
 _PROJECT_PATTERNS: Dict[str, list] = {
+    # Broadened to include Frontend/Web
     "num_backend_projects":  [r"\bbackend\b", r"\brest\s*api\b", r"\bweb\s+app\b",
-                              r"\bserver\b", r"\bmicroservice\b", r"\bcrud\b"],
+                              r"\bserver\b", r"\bmicroservice\b", r"\bcrud\b",
+                              r"\bfrontend\b", r"\bfront[\s\-]end\b", r"\bwebsite\b",
+                              r"\breact\b", r"\bvue\b", r"\bangular\b"],
     "num_ai_projects":       [r"\bmachine\s+learning\b", r"\bml\b", r"\bai\b",
                               r"\bdeep\s+learning\b", r"\bneural\s+net\b",
                               r"\bnlp\b", r"\bcomputer\s*vision\b",
@@ -419,11 +429,18 @@ def extract_github_features(username: str) -> Dict[str, int]:
         reverse=True,
     )[:10]
 
-    for repo in sorted_repos:
-        repo_name = repo.get("full_name", "")
-        if repo_name:
-            commit_count = _fetch_repo_commit_count(username, repo_name)
-            total_commits += commit_count
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_repo = {
+            executor.submit(_fetch_repo_commit_count, username, r.get("full_name", "")): r
+            for r in sorted_repos if r.get("full_name")
+        }
+        for future in concurrent.futures.as_completed(future_to_repo):
+            try:
+                total_commits += future.result()
+            except Exception:
+                pass # Ignore individual failures
 
     # Extrapolate: if user has more repos, multiply proportionally
     if len(repos) > 10 and len(sorted_repos) > 0:

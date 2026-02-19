@@ -63,6 +63,38 @@
   background: var(--red-glow);
 }
 
+/* ─── Tab navigation ─────────────────────────────────────────────── */
+.tab-nav {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-top: -1rem;
+}
+
+.tab-btn {
+  padding: 0.55rem 1.5rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-glass);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: #e0e0e0;
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+.tab-btn.active {
+  color: #fff;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-color: transparent;
+}
+
 /* ─── Form card ──────────────────────────────────────────────────── */
 .form-card {
   background: var(--bg-card);
@@ -171,6 +203,10 @@
   color: var(--green);
   font-weight: 500;
   margin-top: 0.25rem;
+}
+
+.file-upload-name.saved {
+  color: #a5b4fc;
 }
 
 /* ─── Button ─────────────────────────────────────────────────────── */
@@ -397,4 +433,47 @@
   .roles-grid {
     grid-template-columns: 1fr;
   }
+}
+/* ─── Dashboard View ─────────────────────────────────────────────── */
+.dashboard-view {
+    animation: fadeIn 0.4s ease;
+}
+
+.loading-state {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+.empty-dashboard {
+    text-align: center;
+    padding: 3rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    max-width: 500px;
+    margin: 2rem auto;
+}
+
+.empty-dashboard h2 {
+    font-size: 1.8rem;
+    margin-bottom: 1rem;
+    background: var(--accent-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.empty-dashboard p {
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 1rem;
+}
+
+.features-used {
+    margin-top: 1rem;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
 }
