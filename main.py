@@ -194,7 +194,7 @@ async def analyze_full_profile(
     df = df[feature_columns]
 
     readiness = float(model.predict(df)[0])
-    readiness = round(readiness, 2)
+    readiness = round(max(0, min(100, readiness)), 2)
 
     # ── 4. Categorise readiness ───────────────────────────────────────
     if readiness >= 75:
@@ -228,11 +228,22 @@ async def analyze_full_profile(
         db.rollback()
         # Don't crash — still return the result to the user
 
+    # ── Debug: Print non-zero features for user visibility ────────────────
+    non_zero_features = {k: v for k, v in feature_vector.items() if v > 0}
+    print("\n════════════════════════════════════════════════════════════════")
+    print(f" ANALYSIS RESULT FOR: {current_user.name}")
+    print(f" ----------------------------------------------------------------")
+    print(f" READINESS SCORE: {readiness}")
+    print(f" DETECTED FEATURES: {len(non_zero_features)}")
+    print(f" NON-ZERO VALUES: {non_zero_features}")
+    print("════════════════════════════════════════════════════════════════\n")
+
     return {
         "readiness_score": readiness,
         "readiness_category": category,
         "recommended_roles": role_list,
-        "total_features_used": len(feature_vector),
+        "total_features_used": len(non_zero_features),
+        "features": non_zero_features,
     }
 
 
@@ -283,6 +294,7 @@ def analyze_student(data: StudentFeatures):
 
     # 1️⃣ Readiness Prediction
     readiness = float(model.predict(df)[0])
+    readiness = round(max(0, min(100, readiness)), 2)
 
     # 2️⃣ Role Ranking
     top_roles = rank_roles(data.features)

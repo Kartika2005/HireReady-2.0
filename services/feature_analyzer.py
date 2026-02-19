@@ -204,13 +204,24 @@ def extract_resume_features(text: str) -> Dict[str, int]:
                 break  # one match is enough for binary flag
 
     # ── Internship detection (binary) ────────────────────────────────────
-    # Look for occurrences of "intern" near domain keywords.
-    # Strategy: find all sentences/segments containing "intern" and then
-    # check for domain keywords within that context.
-    intern_segments = re.findall(
-        r"[^.;•\n]*intern[^.;•\n]*", lower_text, re.IGNORECASE
-    )
-    intern_context = " ".join(intern_segments)
+    # Look for "intern" with wider context (approx 200 chars around it)
+    # to catch multi-line descriptions.
+    intern_matches = re.finditer(r"\bintern\b", lower_text)
+    intern_indices = [m.start() for m in intern_matches]
+    
+    intern_context = ""
+    for idx in intern_indices:
+        start = max(0, idx - 100)
+        end = min(len(lower_text), idx + 100)
+        intern_context += lower_text[start:end] + " "
+
+    # Fallback: if "experience" section exists, treat it as internship context
+    if not intern_context and "experience" in lower_text:
+        exp_matches = re.finditer(r"\bexperience\b", lower_text)
+        for m in exp_matches:
+            start = m.end()
+            end = min(len(lower_text), start + 500) # Look ahead 500 chars
+            intern_context += lower_text[start:end] + " "
 
     for feature, patterns in _INTERNSHIP_PATTERNS.items():
         for pattern in patterns:
@@ -219,18 +230,31 @@ def extract_resume_features(text: str) -> Dict[str, int]:
                 break
 
     # ── Project counting (integer) ───────────────────────────────────────
-    # Identify project-related sections and count domain keyword matches.
-    project_segments = re.findall(
-        r"[^.;•\n]*project[^.;•\n]*", lower_text, re.IGNORECASE
-    )
-    project_context = " ".join(project_segments)
+    # Look for "project" with wider context.
+    project_matches = re.finditer(r"\bproject\b", lower_text)
+    project_indices = [m.start() for m in project_matches]
+    
+    project_context = ""
+    for idx in project_indices:
+        start = max(0, idx - 100)
+        end = min(len(lower_text), idx + 100)
+        project_context += lower_text[start:end] + " "
+
+    # Fallback: if "projects" header exists
+    if not project_context and "projects" in lower_text:
+         proj_matches = re.finditer(r"\bprojects\b", lower_text)
+         for m in proj_matches:
+            start = m.end()
+            end = min(len(lower_text), start + 500)
+            project_context += lower_text[start:end] + " "
 
     for feature, patterns in _PROJECT_PATTERNS.items():
         count = 0
         for pattern in patterns:
+            # Count occurrences in the gathered context
             count += len(re.findall(pattern, project_context))
-        # Cap at a reasonable maximum to avoid inflated counts from
-        # repeated keywords in the same sentence.
+        
+        # Cap at 10
         features[feature] = min(count, 10)
 
     return features
@@ -287,6 +311,44 @@ _REPO_HINT_PATTERNS: Dict[str, str] = {
         "num_security_projects",
 }
 
+def _clean_github_username(raw: str) -> str:
+    """
+    Extract a plain GitHub username from user input.
+    Handles:  'AadeshhhGavhane'
+              'https://github.com/AadeshhhGavhane'
+              'github.com/AadeshhhGavhane'
+              'http://github.com/AadeshhhGavhane/'
+    """
+    raw = raw.strip().rstrip("/")
+    # Strip common GitHub URL prefixes
+    for prefix in ["https://github.com/", "http://github.com/", "github.com/"]:
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    # Take only the first path segment (ignore /repos, /stars, etc.)
+    return raw.split("/")[0].strip()
+
+
+def _clean_leetcode_username(raw: str) -> str:
+    """
+    Extract a plain LeetCode username from user input.
+    Handles:  'aadesh'
+              'https://leetcode.com/u/aadesh/'
+              'https://leetcode.com/aadesh/'
+              'leetcode.com/u/aadesh'
+    """
+    raw = raw.strip().rstrip("/")
+    # Strip common LeetCode URL prefixes
+    for prefix in ["https://leetcode.com/u/", "https://leetcode.com/",
+                    "http://leetcode.com/u/", "http://leetcode.com/",
+                    "leetcode.com/u/", "leetcode.com/"]:
+        if raw.lower().startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    # Take only the first path segment
+    return raw.split("/")[0].strip()
+
+
 GITHUB_API_BASE = "https://api.github.com"
 
 
@@ -296,11 +358,8 @@ def extract_github_features(username: str) -> Dict[str, int]:
       - github_total_repos
       - num_backend_projects, num_ai_projects, num_mobile_projects,
         num_cloud_projects, num_security_projects
-      - github_total_commits (note:
-        the REST API does not expose total commit count cheaply, so we
-        approximate via the number of repos as a proxy; accurate commit
-        counting would require per-repo pagination).
-      - open_source_contribution_score (non-fork public repos count).
+      - github_total_commits  (fetched via per-repo commit counts)
+      - open_source_contribution_score (weighted: repos + stars + forks)
 
     Returns a partial feature dict. On any API failure, returns zeros.
     """
@@ -309,6 +368,9 @@ def extract_github_features(username: str) -> Dict[str, int]:
     if not username or not username.strip():
         logger.info("No GitHub username provided — returning zero vector.")
         return features
+
+    username = _clean_github_username(username)
+    logger.info("GitHub: cleaned username = '%s'", username)
 
     try:
         repos = _fetch_all_repos(username)
@@ -319,10 +381,19 @@ def extract_github_features(username: str) -> Dict[str, int]:
     features["github_total_repos"] = len(repos)
 
     non_fork_count = 0
+    total_stars = 0
+    total_forks = 0
+    total_commits = 0
+
     for repo in repos:
         language = repo.get("language")
         name_desc = f"{repo.get('name', '')} {repo.get('description') or ''}".lower()
         is_fork = repo.get("fork", False)
+        stars = repo.get("stargazers_count", 0)
+        forks = repo.get("forks_count", 0)
+
+        total_stars += stars
+        total_forks += forks
 
         if not is_fork:
             non_fork_count += 1
@@ -331,7 +402,6 @@ def extract_github_features(username: str) -> Dict[str, int]:
         if language and language in _LANGUAGE_TO_CATEGORY:
             features[_LANGUAGE_TO_CATEGORY[language]] += 1
         elif language in _AMBIGUOUS_LANGUAGES or language is None:
-            # Use repo name/description heuristics for ambiguous languages
             classified = False
             for pattern, category in _REPO_HINT_PATTERNS.items():
                 if re.search(pattern, name_desc):
@@ -339,18 +409,84 @@ def extract_github_features(username: str) -> Dict[str, int]:
                     classified = True
                     break
             if not classified and language in _AMBIGUOUS_LANGUAGES:
-                # Default ambiguous languages to backend if no hint matches
                 features["num_backend_projects"] += 1
 
-    # Approximate open-source contribution score as count of non-fork repos
-    features["open_source_contribution_score"] = non_fork_count
+    # ── Fetch actual commit counts (top repos by activity) ───────────────
+    # Sort repos by most recently pushed, take top 10 to avoid rate limits
+    sorted_repos = sorted(
+        repos,
+        key=lambda r: r.get("pushed_at", ""),
+        reverse=True,
+    )[:10]
 
-    # github_total_commits is left at 0 because the REST API does not
-    # provide a total-commit endpoint without paginating every repo's
-    # commit history (which would be extremely slow and rate-limit heavy).
-    # A future enhancement could use the GraphQL API's contributionsCollection.
+    for repo in sorted_repos:
+        repo_name = repo.get("full_name", "")
+        if repo_name:
+            commit_count = _fetch_repo_commit_count(username, repo_name)
+            total_commits += commit_count
+
+    # Extrapolate: if user has more repos, multiply proportionally
+    if len(repos) > 10 and len(sorted_repos) > 0:
+        avg_commits_per_repo = total_commits / len(sorted_repos)
+        total_commits = int(avg_commits_per_repo * len(repos))
+
+    features["github_total_commits"] = total_commits
+
+    # ── Contribution score: weighted combination ─────────────────────────
+    # Formula: repos + (stars * 2) + (forks * 3) + (commits / 10)
+    # This gives a meaningful score that reflects actual open-source impact
+    contribution_score = (
+        non_fork_count
+        + (total_stars * 2)
+        + (total_forks * 3)
+        + int(total_commits / 10)
+    )
+    features["open_source_contribution_score"] = contribution_score
+
+    logger.info(
+        "GitHub features for '%s': repos=%d, commits=%d, stars=%d, forks=%d, contribution_score=%d",
+        username, len(repos), total_commits, total_stars, total_forks, contribution_score,
+    )
 
     return features
+
+
+def _fetch_repo_commit_count(username: str, full_name: str) -> int:
+    """
+    Fetch the number of commits by the user in a specific repo.
+    Uses the commits API with author filter, checking just the first page
+    to get total count from the Link header.
+    """
+    token = os.getenv("GITHUB_TOKEN")
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        url = f"{GITHUB_API_BASE}/repos/{full_name}/commits"
+        resp = requests.get(
+            url,
+            params={"author": username, "per_page": 1},
+            timeout=10,
+            headers=headers,
+        )
+        resp.raise_for_status()
+
+        # If there's a Link header with "last" page, extract count
+        link_header = resp.headers.get("Link", "")
+        if "last" in link_header:
+            import re as _re
+            match = _re.search(r'page=(\d+)>; rel="last"', link_header)
+            if match:
+                return int(match.group(1))
+
+        # Otherwise, the first page has all commits
+        data = resp.json()
+        return len(data)
+
+    except Exception as exc:
+        logger.debug("Could not fetch commits for %s: %s", full_name, exc)
+        return 0
 
 
 def _fetch_all_repos(username: str, per_page: int = 100) -> list:
@@ -427,6 +563,9 @@ def extract_leetcode_features(username: str) -> Dict[str, int]:
     if not username or not username.strip():
         logger.info("No LeetCode username provided — returning zero vector.")
         return features
+
+    username = _clean_leetcode_username(username)
+    logger.info("LeetCode: cleaned username = '%s'", username)
 
     try:
         payload = {
