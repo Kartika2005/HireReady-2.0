@@ -9,3 +9,12 @@ __pycache__/
 # Node
 node_modules/
 dist/
+
+# OS and IDE Files
+.DS_Store
+.vscode/
+.idea/
+
+# Database
+*.sqlite3
+*.db

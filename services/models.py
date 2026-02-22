@@ -77,6 +77,7 @@ class QuizResult(Base):
     difficulty = Column(String(50), default="Medium")
     score = Column(Float, nullable=False)
     total_questions = Column(Integer, nullable=False)
+    questions = Column(JSON, nullable=False, default=list) # Added to store the generated questions
     answers = Column(JSON, nullable=False)
     created_at = Column(
         DateTime(timezone=True),

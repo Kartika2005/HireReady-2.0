@@ -541,21 +541,34 @@ def analyze_student(data: StudentFeatures):
 class QuizGenerateRequest(BaseModel):
     role: str
     difficulty: str
+    resultId: Optional[str] = None
 
 class QuizSubmitRequest(BaseModel):
     role: str
     difficulty: str
     score: int
     totalQuestions: int
+    questions: list # Array of stored question objects
     answers: list # List of objects
     resultId: Optional[str] = None
 
-@app.post("/api/quiz/generate")
+@app.post("/quiz/generate")
 def generate_quiz_endpoint(
     data: QuizGenerateRequest, 
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     try:
+        if data.resultId:
+            # Retest scenario: fetch the exact previous questions
+            result = db.query(QuizResult).filter(
+                QuizResult.id == data.resultId,
+                QuizResult.user_id == current_user.id
+            ).first()
+            if result and result.questions:
+                return {"questions": result.questions}
+                
+        # New quiz scenario: generate fresh questions
         questions = generate_quiz_questions(data.role, data.difficulty)
         return {"questions": questions}
     except ValueError as e:
@@ -565,7 +578,7 @@ def generate_quiz_endpoint(
         logger.error("Quiz generation failed: %s", e)
         raise HTTPException(status_code=500, detail="Failed to generate quiz")
 
-@app.post("/api/quiz/submit")
+@app.post("/quiz/submit")
 def submit_quiz_endpoint(
     data: QuizSubmitRequest,
     current_user: User = Depends(get_current_user),
@@ -584,6 +597,7 @@ def submit_quiz_endpoint(
                 result.difficulty = data.difficulty
                 result.score = data.score
                 result.total_questions = data.totalQuestions
+                result.questions = data.questions if data.questions else result.questions
                 result.answers = data.answers
                 # created_at remains the same, or we could update a updated_at field
                 db.commit()
@@ -597,6 +611,7 @@ def submit_quiz_endpoint(
             difficulty=data.difficulty,
             score=data.score,
             total_questions=data.totalQuestions,
+            questions=data.questions,
             answers=data.answers
         )
         db.add(result)
@@ -608,7 +623,7 @@ def submit_quiz_endpoint(
         # db.rollback() # Handled by session usually but good practice
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/quiz/results")
+@app.get("/quiz/results")
 def get_quiz_results(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -616,7 +631,7 @@ def get_quiz_results(
     results = db.query(QuizResult).filter(QuizResult.user_id == current_user.id).order_by(QuizResult.created_at.desc()).all()
     return {"results": results}
 
-@app.get("/api/quiz/roles")
+@app.get("/quiz/roles")
 def get_quiz_roles(current_user: User = Depends(get_current_user)):
      roles = [
         'Backend Developer', 'Frontend Developer', 'Full Stack Developer',

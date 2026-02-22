@@ -173,11 +173,34 @@
     color: #94a3b8;
 }
 
+.history-action {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
 .score-badge {
     padding: 0.3rem 0.8rem;
     border-radius: 99px;
     font-weight: 700;
     font-size: 0.9rem;
+}
+
+.retest-btn {
+    background: transparent;
+    border: 1px solid #6366f1;
+    color: #8b5cf6;
+    padding: 0.3rem 0.8rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.retest-btn:hover {
+    background: rgba(99, 102, 241, 0.15);
+    color: #a855f7;
 }
 
 .score-badge.good {

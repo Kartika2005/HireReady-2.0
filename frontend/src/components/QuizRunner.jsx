@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import './QuizRunner.css';
 
-const API_BASE_URL = "http://localhost:8000"; // Adjust if needed
+const API_BASE_URL = "/api"; // Adjust if needed
 
 const QuizRunner = ({ role, difficulty, initialResultId, onComplete, onCancel }) => {
     const [questions, setQuestions] = useState([]);
@@ -20,13 +20,13 @@ const QuizRunner = ({ role, difficulty, initialResultId, onComplete, onCancel })
         const fetchQuestions = async () => {
             try {
                 const token = localStorage.getItem("token");
-                const res = await fetch(`${API_BASE_URL}/api/quiz/generate`, {
+                const res = await fetch(`${API_BASE_URL}/quiz/generate`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
                         "Authorization": `Bearer ${token}`
                     },
-                    body: JSON.stringify({ role, difficulty })
+                    body: JSON.stringify({ role, difficulty, resultId: initialResultId })
                 });
 
                 if (!res.ok) {
@@ -79,7 +79,7 @@ const QuizRunner = ({ role, difficulty, initialResultId, onComplete, onCancel })
             // Submit to backend
             try {
                 const token = localStorage.getItem("token");
-                const res = await fetch(`${API_BASE_URL}/api/quiz/submit`, {
+                const res = await fetch(`${API_BASE_URL}/quiz/submit`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -90,6 +90,7 @@ const QuizRunner = ({ role, difficulty, initialResultId, onComplete, onCancel })
                         difficulty,
                         score: correct,
                         totalQuestions: questions.length,
+                        questions: questions,
                         answers: answerPayload,
                         resultId: resultId // Send existing ID for updates
                     })

@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import './QuizPage.css';
 import QuizRunner from '../components/QuizRunner';
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "/api";
 
 const QuizPage = () => {
     const [roles, setRoles] = useState([]);
@@ -13,6 +13,7 @@ const QuizPage = () => {
     const [difficulty, setDifficulty] = useState('Medium');
     const [isRunning, setIsRunning] = useState(false);
     const [loading, setLoading] = useState(true);
+    const [retestResultId, setRetestResultId] = useState(null);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -21,8 +22,8 @@ const QuizPage = () => {
                 const headers = { "Authorization": `Bearer ${token}` };
 
                 const [rolesRes, historyRes] = await Promise.all([
-                    fetch(`${API_BASE_URL}/api/quiz/roles`, { headers }),
-                    fetch(`${API_BASE_URL}/api/quiz/results`, { headers })
+                    fetch(`${API_BASE_URL}/quiz/roles`, { headers }),
+                    fetch(`${API_BASE_URL}/quiz/results`, { headers })
                 ]);
 
                 if (rolesRes.status === 401 || historyRes.status === 401) {
@@ -51,18 +52,25 @@ const QuizPage = () => {
     }, [isRunning]); // Reload history when returning from run
 
     const handleStart = () => {
-        if (selectedRole) setIsRunning(true);
+        if (selectedRole) {
+            setRetestResultId(null);
+            setIsRunning(true);
+        }
     };
 
-    // Find existing result for retest
-    const existingResult = history.find(h => h.role === selectedRole && h.difficulty === difficulty);
+    const handleRetest = (item) => {
+        setSelectedRole(item.role);
+        setDifficulty(item.difficulty || 'Medium');
+        setRetestResultId(item.id);
+        setIsRunning(true);
+    };
 
     if (isRunning) {
         return (
             <QuizRunner
                 role={selectedRole}
                 difficulty={difficulty}
-                initialResultId={existingResult?.id}
+                initialResultId={retestResultId}
                 onComplete={() => setIsRunning(false)}
                 onCancel={() => setIsRunning(false)}
             />
@@ -129,11 +137,14 @@ const QuizPage = () => {
                                         <span className="history-role">{item.role}</span>
                                         <span className="history-meta">{item.difficulty} • {new Date(item.created_at).toLocaleDateString()}</span>
                                     </div>
-                                    <div className="history-score">
-                                        <span className={`score-badge ${(item.score / 10) >= 0.8 ? 'good' : (item.score / 10) >= 0.5 ? 'avg' : 'bad'
+                                    <div className="history-action">
+                                        <span className={`score-badge ${(item.score / item.total_questions) >= 0.8 ? 'good' : (item.score / item.total_questions) >= 0.5 ? 'avg' : 'bad'
                                             }`}>
-                                            {item.score}/10
+                                            {item.score}/{item.total_questions}
                                         </span>
+                                        <button className="retest-btn" onClick={() => handleRetest(item)}>
+                                            Retest
+                                        </button>
                                     </div>
                                 </div>
                             ))}
