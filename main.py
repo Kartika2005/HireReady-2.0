@@ -1,5 +1,8 @@
-from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, status
+from fastapi import FastAPI, File, UploadFile, Form, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 import joblib
@@ -15,13 +18,15 @@ from typing import Optional, List
 from services.role_engine import rank_roles
 from services.feature_analyzer import build_complete_feature_vector
 from services.database import engine, get_db, Base
-from services.models import User, AnalysisResult, QuizResult
+from services.models import User, AnalysisResult, QuizResult, Job, TpoLogin
 from services.quiz_generator import generate_quiz_questions
 from services.auth import (
     hash_password,
     verify_password,
     create_access_token,
     get_current_user,
+    get_current_student,
+    get_current_tpo,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,6 +40,12 @@ feature_columns = joblib.load("feature_columns.pkl")
 
 app = FastAPI()
 
+# Paths for serving the built frontend
+BASE_DIR = Path(__file__).resolve().parent
+FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
+FRONTEND_INDEX = FRONTEND_DIST / "index.html"
+FRONTEND_ASSETS = FRONTEND_DIST / "assets"
+
 # Allow CORS for the React dev server
 app.add_middleware(
     CORSMiddleware,
@@ -44,6 +55,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount built asset folder if present
+if FRONTEND_ASSETS.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_ASSETS), name="assets")
+else:
+    # Optional fallback: serve public assets if dist not built yet
+    PUBLIC_DIR = BASE_DIR / "frontend" / "public"
+    if PUBLIC_DIR.exists():
+        app.mount("/assets", StaticFiles(directory=PUBLIC_DIR), name="assets")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_root(request: Request):
+    """Serve the built HireReady frontend."""
+    index_path = FRONTEND_INDEX if FRONTEND_INDEX.exists() else BASE_DIR / "frontend" / "index.html"
+    if not index_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Frontend build not found. Run 'npm install' then 'npm run build' inside frontend/.",
+        )
+    return FileResponse(index_path)
+    
+@app.get("/vite.svg")
+async def serve_vite_svg():
+    svg_path = FRONTEND_DIST / "vite.svg"
+    if not svg_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="vite.svg not found. Build frontend.")
+    return FileResponse(svg_path)
+
+
+@app.get("/api/ping")
+def ping():
+    """Simple health endpoint for the UI button."""
+    return {"status": "ok"}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # AUTH ENDPOINTS
@@ -51,20 +96,56 @@ app.add_middleware(
 
 class RegisterRequest(BaseModel):
     name: str
-    email: str
+    email: EmailStr
     password: str
+    role: str = "student"  # "student" or "tpo"
 
 
 class LoginRequest(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
-@app.post("/auth/register")
+@app.post("/api/auth/register")
 def register(data: RegisterRequest, db: Session = Depends(get_db)):
-    """Create a new user account."""
-    # Check for existing email
-    existing = db.query(User).filter(User.email == data.email).first()
+    """Create a new account. Students → users table, TPOs → TPO_login table."""
+    email = data.email.strip().lower()
+    role = data.role.strip().lower()
+    if role not in ("student", "tpo"):
+        raise HTTPException(status_code=400, detail="Role must be 'student' or 'tpo'.")
+
+    # ── TPO Registration → TPO_login table ────────────────────────────────
+    if role == "tpo":
+        existing_tpo = db.query(TpoLogin).filter(TpoLogin.email == email).first()
+        if existing_tpo:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A TPO account with this email already exists.",
+            )
+
+        tpo = TpoLogin(
+            email=email,
+            password=hash_password(data.password),
+        )
+        db.add(tpo)
+        db.commit()
+
+        import uuid as _uuid
+        tpo_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, email))
+        token = create_access_token(email, role="tpo")
+
+        return {
+            "token": token,
+            "user": {
+                "id": tpo_uuid,
+                "name": data.name.strip(),
+                "email": tpo.email,
+                "role": "tpo",
+            },
+        }
+
+    # ── Student Registration → users table ────────────────────────────────
+    existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -73,14 +154,15 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
 
     user = User(
         name=data.name.strip(),
-        email=data.email.strip().lower(),
+        email=email,
         password_hash=hash_password(data.password),
+        role="student",
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    token = create_access_token(str(user.id))
+    token = create_access_token(str(user.id), role="student")
 
     return {
         "token": token,
@@ -88,14 +170,46 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
             "id": str(user.id),
             "name": user.name,
             "email": user.email,
+            "role": user.role,
+            "github_username": user.github_username or "",
+            "leetcode_username": user.leetcode_username or "",
+            "resume_filename": user.resume_filename or "",
+            "mobile_number": user.mobile_number or "",
+            "cgpa": user.cgpa,
+            "certifications": user.certifications or "",
+            "preferred_job_roles": user.preferred_job_roles or "",
         },
     }
 
 
-@app.post("/auth/login")
+@app.post("/api/auth/login")
 def login(data: LoginRequest, db: Session = Depends(get_db)):
-    """Authenticate and return a JWT token."""
-    user = db.query(User).filter(User.email == data.email.strip().lower()).first()
+    """Authenticate. Checks TPO_login first, then users table."""
+    email = data.email.strip().lower()
+
+    # ── Try TPO_login table first ─────────────────────────────────────────
+    tpo = db.query(TpoLogin).filter(TpoLogin.email == email).first()
+    if tpo:
+        if not verify_password(data.password, tpo.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password.",
+            )
+        import uuid as _uuid
+        tpo_uuid = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, tpo.email))
+        token = create_access_token(tpo.email, role="tpo")
+        return {
+            "token": token,
+            "user": {
+                "id": tpo_uuid,
+                "name": tpo.email,
+                "email": tpo.email,
+                "role": "tpo",
+            },
+        }
+
+    # ── Fall back to users (student) table ────────────────────────────────
+    user = db.query(User).filter(User.email == email).first()
 
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(
@@ -103,7 +217,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             detail="Invalid email or password.",
         )
 
-    token = create_access_token(str(user.id))
+    token = create_access_token(str(user.id), role=user.role)
 
     return {
         "token": token,
@@ -111,20 +225,33 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
             "id": str(user.id),
             "name": user.name,
             "email": user.email,
+            "role": user.role,
+            "github_username": user.github_username or "",
+            "leetcode_username": user.leetcode_username or "",
+            "resume_filename": user.resume_filename or "",
+            "mobile_number": user.mobile_number or "",
+            "cgpa": user.cgpa,
+            "certifications": user.certifications or "",
+            "preferred_job_roles": user.preferred_job_roles or "",
         },
     }
 
 
-@app.get("/auth/me")
+@app.get("/api/auth/me")
 def get_me(current_user: User = Depends(get_current_user)):
     """Return the current user's profile."""
     return {
         "id": str(current_user.id),
         "name": current_user.name,
         "email": current_user.email,
+        "role": current_user.role,
         "github_username": current_user.github_username or "",
         "leetcode_username": current_user.leetcode_username or "",
         "resume_filename": current_user.resume_filename or "",
+        "mobile_number": current_user.mobile_number or "",
+        "cgpa": current_user.cgpa,
+        "certifications": current_user.certifications or "",
+        "preferred_job_roles": current_user.preferred_job_roles or "",
     }
 
 
@@ -201,6 +328,10 @@ def run_analysis_pipeline(
             recommended_roles=role_list,
         )
         db.add(analysis)
+
+        # Store resume_score on user for shortlisting
+        user.resume_score = readiness
+
         db.commit()
         db.refresh(analysis)
         logger.info("Auto-analysis saved: %s", analysis.id)
@@ -214,11 +345,15 @@ def run_analysis_pipeline(
 # PROFILE ENDPOINTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.put("/auth/profile")
+@app.put("/api/auth/profile")
 async def update_profile(
     name: Optional[str] = Form(None),
     github_username: Optional[str] = Form(None),
     leetcode_username: Optional[str] = Form(None),
+    mobile_number: Optional[str] = Form(None),
+    cgpa: Optional[str] = Form(None),
+    certifications: Optional[str] = Form(None),
+    preferred_job_roles: Optional[str] = Form(None),
     resume: UploadFile = File(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -234,6 +369,21 @@ async def update_profile(
 
     if leetcode_username is not None:
         current_user.leetcode_username = leetcode_username.strip()
+
+    if mobile_number is not None:
+        current_user.mobile_number = mobile_number.strip()
+
+    if cgpa is not None and cgpa.strip():
+        try:
+            current_user.cgpa = float(cgpa.strip())
+        except ValueError:
+            pass
+
+    if certifications is not None:
+        current_user.certifications = certifications.strip()
+
+    if preferred_job_roles is not None:
+        current_user.preferred_job_roles = preferred_job_roles.strip()
 
     # Handle resume upload
     if resume and resume.filename:
@@ -279,6 +429,10 @@ async def update_profile(
             "email": current_user.email,
             "github_username": current_user.github_username,
             "leetcode_username": current_user.leetcode_username,
+            "mobile_number": current_user.mobile_number or "",
+            "cgpa": current_user.cgpa,
+            "certifications": current_user.certifications or "",
+            "preferred_job_roles": current_user.preferred_job_roles or "",
         },
         "analysis": {
             "status": "success",
@@ -291,12 +445,16 @@ async def update_profile(
     }
 
 
-@app.get("/analysis/latest")
+@app.get("/api/analysis/latest")
 def get_latest_analysis(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Get the most recent analysis result for the user."""
+    # TPOs don't have analysis results
+    if current_user.role == "tpo":
+        return {"status": "no_analysis"}
+
     # Query AnalysisResult table
     latest = (
         db.query(AnalysisResult)
@@ -337,7 +495,7 @@ class FeatureExtractionRequest(BaseModel):
     leetcode_username: str = ""
 
 
-@app.post("/extract-features")
+@app.post("/api/extract-features")
 def extract_features(data: FeatureExtractionRequest):
     """
     Extract a 64-feature dictionary from resume text, GitHub profile,
@@ -352,7 +510,7 @@ def extract_features(data: FeatureExtractionRequest):
     return {"features": feature_vector}
 
 
-@app.post("/analyze-full-profile")
+@app.post("/api/analyze-full-profile")
 async def analyze_full_profile(
     resume: Optional[UploadFile] = File(None),
     github_username: str = Form(""),
@@ -478,6 +636,7 @@ async def analyze_full_profile(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @app.get("/history")
+@app.get("/api/history")
 def get_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -506,6 +665,7 @@ def get_history(
 
 
 @app.post("/analyze-student")
+@app.post("/api/analyze-student")
 def analyze_student(data: StudentFeatures):
 
     # Convert input dict to dataframe
@@ -553,6 +713,7 @@ class QuizSubmitRequest(BaseModel):
     resultId: Optional[str] = None
 
 @app.post("/quiz/generate")
+@app.post("/api/quiz/generate")
 def generate_quiz_endpoint(
     data: QuizGenerateRequest, 
     current_user: User = Depends(get_current_user),
@@ -579,6 +740,7 @@ def generate_quiz_endpoint(
         raise HTTPException(status_code=500, detail="Failed to generate quiz")
 
 @app.post("/quiz/submit")
+@app.post("/api/quiz/submit")
 def submit_quiz_endpoint(
     data: QuizSubmitRequest,
     current_user: User = Depends(get_current_user),
@@ -624,6 +786,7 @@ def submit_quiz_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/quiz/results")
+@app.get("/api/quiz/results")
 def get_quiz_results(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -632,6 +795,7 @@ def get_quiz_results(
     return {"results": results}
 
 @app.get("/quiz/roles")
+@app.get("/api/quiz/roles")
 def get_quiz_roles(current_user: User = Depends(get_current_user)):
      roles = [
         'Backend Developer', 'Frontend Developer', 'Full Stack Developer',
@@ -643,4 +807,257 @@ def get_quiz_roles(current_user: User = Depends(get_current_user)):
         'Database Administrator', 'Systems Engineer', 'UI/UX Designer',
     ]
      return {"roles": roles}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TPO  —  Job-posting & applicant management
+# ══════════════════════════════════════════════════════════════════════════════
+
+class JobCreateRequest(BaseModel):
+    title: str
+    company: str
+    description: str = ""
+    eligibility: str = ""
+    job_role: str = ""
+    min_cgpa: Optional[float] = None
+    required_certifications: str = ""
+    preferred_skills: str = ""
+    package_lpa: Optional[float] = None
+    deadline: str = ""
+
+
+@app.post("/api/tpo/jobs")
+def create_job(
+    body: JobCreateRequest,
+    tpo: User = Depends(get_current_tpo),
+    db: Session = Depends(get_db),
+):
+    """TPO creates a new job posting."""
+    job = Job(
+        posted_by=tpo.id,
+        title=body.title,
+        company=body.company,
+        description=body.description,
+        eligibility=body.eligibility,
+        job_role=body.job_role,
+        min_cgpa=body.min_cgpa,
+        required_certifications=body.required_certifications,
+        preferred_skills=body.preferred_skills,
+        package_lpa=body.package_lpa,
+        deadline=body.deadline,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return {
+        "id": str(job.id),
+        "title": job.title,
+        "company": job.company,
+        "description": job.description,
+        "eligibility": job.eligibility,
+        "job_role": job.job_role,
+        "min_cgpa": job.min_cgpa,
+        "required_certifications": job.required_certifications,
+        "preferred_skills": job.preferred_skills,
+        "package_lpa": job.package_lpa,
+        "deadline": job.deadline,
+        "created_at": str(job.created_at),
+    }
+
+
+@app.get("/api/tpo/jobs")
+def list_tpo_jobs(
+    tpo: User = Depends(get_current_tpo),
+    db: Session = Depends(get_db),
+):
+    """List all jobs posted by this TPO."""
+    jobs = (
+        db.query(Job)
+        .filter(Job.posted_by == tpo.id)
+        .order_by(Job.created_at.desc())
+        .all()
+    )
+    return {
+        "jobs": [
+            {
+                "id": str(j.id),
+                "title": j.title,
+                "company": j.company,
+                "description": j.description,
+                "eligibility": j.eligibility,
+                "job_role": j.job_role or "",
+                "min_cgpa": j.min_cgpa,
+                "required_certifications": j.required_certifications or "",
+                "preferred_skills": j.preferred_skills or "",
+                "package_lpa": j.package_lpa,
+                "deadline": j.deadline,
+                "created_at": str(j.created_at),
+            }
+            for j in jobs
+        ]
+    }
+
+
+@app.delete("/api/tpo/jobs/{job_id}")
+def delete_job(
+    job_id: str,
+    tpo: User = Depends(get_current_tpo),
+    db: Session = Depends(get_db),
+):
+    """TPO deletes one of their own job postings."""
+    job = db.query(Job).filter(Job.id == job_id, Job.posted_by == tpo.id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    db.delete(job)
+    db.commit()
+    return {"detail": "Job deleted"}
+
+
+@app.get("/api/tpo/jobs/{job_id}/shortlisted")
+def get_shortlisted_students(
+    job_id: str,
+    tpo: User = Depends(get_current_tpo),
+    db: Session = Depends(get_db),
+):
+    """
+    Auto-shortlist students for a job based on CGPA, certifications,
+    resume_score, and preferred_skills match.
+    
+    Filters:
+      - cgpa >= job.min_cgpa
+      - All required_certifications matched
+      - resume_score >= 60
+      
+    Score = (skill_match + cgpa_score + resume_score/100) / 3
+    """
+    job = db.query(Job).filter(Job.id == job_id, Job.posted_by == tpo.id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Parse required certifications (lowercased, trimmed)
+    req_certs = [
+        c.strip().lower()
+        for c in (job.required_certifications or "").split(",")
+        if c.strip()
+    ]
+
+    # Parse preferred skills (lowercased, trimmed)
+    pref_skills = [
+        s.strip().lower()
+        for s in (job.preferred_skills or "").split(",")
+        if s.strip()
+    ]
+
+    # Fetch all students
+    students = db.query(User).filter(User.role == "student").all()
+
+    shortlisted = []
+    for s in students:
+        # --- CGPA filter ---
+        if job.min_cgpa is not None and job.min_cgpa > 0:
+            if s.cgpa is None or s.cgpa < job.min_cgpa:
+                continue
+
+        # --- Certification filter ---
+        student_certs = [
+            c.strip().lower()
+            for c in (s.certifications or "").split(",")
+            if c.strip()
+        ]
+        if req_certs:
+            matched_certs = [rc for rc in req_certs if rc in student_certs]
+            if len(matched_certs) < len(req_certs):
+                continue  # student missing required certs
+        else:
+            matched_certs = []
+
+        # --- Resume score filter (>= 50) ---
+        resume_sc = s.resume_score or 0
+        if resume_sc < 50:
+            continue
+
+        # --- Skill match ---
+        # Check student's resume_text + certifications + preferred_job_roles for skills
+        student_text = " ".join([
+            (s.resume_text or "").lower(),
+            (s.certifications or "").lower(),
+            (s.preferred_job_roles or "").lower(),
+        ])
+        if pref_skills:
+            matched_skills = [sk for sk in pref_skills if sk in student_text]
+            skill_match = len(matched_skills) / len(pref_skills)
+        else:
+            matched_skills = []
+            skill_match = 1.0  # no skills required = full match
+
+        # --- Calculate match score ---
+        cgpa_score = min((s.cgpa or 0) / 10.0, 1.0)
+        match_score = round(((skill_match + cgpa_score + resume_sc / 100) / 3) * 100, 2)
+
+        shortlisted.append({
+            "student": {
+                "id": str(s.id),
+                "name": s.name,
+                "email": s.email,
+                "mobile_number": s.mobile_number or "",
+                "cgpa": s.cgpa,
+                "certifications": s.certifications or "",
+                "preferred_job_roles": s.preferred_job_roles or "",
+                "resume_text": s.resume_text or "",
+                "resume_score": resume_sc,
+            },
+            "match_score": match_score,
+            "matched_skills": matched_skills,
+            "matched_certifications": matched_certs,
+        })
+
+    # Sort by match_score descending
+    shortlisted.sort(key=lambda x: x["match_score"], reverse=True)
+
+    return {
+        "job": {
+            "id": str(job.id),
+            "title": job.title,
+            "company": job.company,
+            "min_cgpa": job.min_cgpa,
+            "required_certifications": job.required_certifications or "",
+            "preferred_skills": job.preferred_skills or "",
+            "job_role": job.job_role or "",
+        },
+        "shortlisted_students": shortlisted,
+        "total": len(shortlisted),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Students  —  Browse & apply to jobs
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/jobs")
+def list_all_jobs(
+    current_user: User = Depends(get_current_student),
+    db: Session = Depends(get_db),
+):
+    """Students browse all available job postings (view-only, no apply)."""
+    jobs = db.query(Job).order_by(Job.created_at.desc()).all()
+
+    return {
+        "jobs": [
+            {
+                "id": str(j.id),
+                "title": j.title,
+                "company": j.company,
+                "description": j.description,
+                "eligibility": j.eligibility,
+                "job_role": j.job_role or "",
+                "min_cgpa": j.min_cgpa,
+                "required_certifications": j.required_certifications or "",
+                "preferred_skills": j.preferred_skills or "",
+                "package_lpa": j.package_lpa,
+                "deadline": j.deadline,
+                "created_at": str(j.created_at),
+            }
+            for j in jobs
+        ]
+    }
 

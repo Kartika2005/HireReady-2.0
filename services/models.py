@@ -2,8 +2,10 @@
 SQLAlchemy ORM models for HireReady 2.0.
 
 Tables:
-  - users:            Registered user accounts
+  - users:            Registered user accounts (students + TPOs)
   - analysis_results: Stored analysis outcomes linked to a user
+  - quiz_results:     Quiz attempt records
+  - jobs:             Job postings created by TPOs
 """
 
 import uuid
@@ -23,8 +25,14 @@ class User(Base):
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(Text, nullable=False)
+    role = Column(String(20), nullable=False, default="student")  # "student" | "tpo"
     github_username = Column(String(100), default="")
     leetcode_username = Column(String(100), default="")
+    mobile_number = Column(String(20), default="")
+    cgpa = Column(Float, nullable=True)
+    certifications = Column(Text, default="")        # comma-separated
+    preferred_job_roles = Column(Text, default="")    # comma-separated
+    resume_score = Column(Float, nullable=True)        # from latest analysis readiness_score
     resume_filename = Column(String(255), default="")
     resume_text = Column(Text, default="")
     created_at = Column(
@@ -32,7 +40,7 @@ class User(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
-    # Relationship to analysis results
+    # Relationships
     analyses = relationship("AnalysisResult", back_populates="user")
     quizzes = relationship("QuizResult", back_populates="user")
 
@@ -87,3 +95,34 @@ class QuizResult(Base):
     user = relationship("User", back_populates="quizzes")
 
 
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    posted_by = Column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    title = Column(String(255), nullable=False)
+    company = Column(String(255), nullable=False)
+    description = Column(Text, default="")
+    eligibility = Column(Text, default="")
+    job_role = Column(String(255), default="")             # target role
+    min_cgpa = Column(Float, nullable=True)                # minimum CGPA filter
+    required_certifications = Column(Text, default="")     # comma-separated
+    preferred_skills = Column(Text, default="")             # comma-separated skills
+    package_lpa = Column(Float, nullable=True)                # package per annum in LPA
+    deadline = Column(String(100), default="")
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TpoLogin(Base):
+    """Separate table for TPO admin credentials (TPO_login)."""
+    __tablename__ = "TPO_login"
+
+    email = Column(String(255), primary_key=True)
+    password = Column(Text, nullable=False)

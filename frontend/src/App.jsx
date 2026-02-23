@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react';
+import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
+import TpoLoginPage from './pages/TpoLoginPage';
+import TpoDashboard from './pages/TpoDashboard';
 import ProfilePage from './pages/ProfilePage';
 import ResultCard from './components/ResultCard';
 import QuizPage from './pages/QuizPage';
+import StudentJobs from './pages/StudentJobs';
 import './App.css';
 
 const API_BASE = '/api';
@@ -10,6 +14,9 @@ const API_BASE = '/api';
 export default function App() {
   /* ── Tab state ───────────────────────────────────────────────────── */
   const [activeTab, setActiveTab] = useState('dashboard');
+
+  /* ── Role selection (landing page) ──────────────────────────────── */
+  const [selectedRole, setSelectedRole] = useState(null); // 'student' | 'tpo'
 
   /* ── Analysis state ─────────────────────────────────────────────── */
   const [result, setResult] = useState(null);
@@ -90,6 +97,7 @@ export default function App() {
     localStorage.removeItem('user');
     setResult(null);
     setActiveTab('dashboard');
+    setSelectedRole(null);
   };
 
   const handleProfileUpdate = (updatedUser, newAnalysis) => {
@@ -111,9 +119,23 @@ export default function App() {
     return 'red';
   };
 
-  /* ── If not logged in, show login page ──────────────────────────── */
+  /* ── If not logged in, show landing → login flow ─────────────────── */
   if (!isLoggedIn) {
-    return <LoginPage onLogin={handleLogin} />;
+    // No role selected yet → show landing page with two cards
+    if (!selectedRole) {
+      return <LandingPage onSelectRole={setSelectedRole} />;
+    }
+    // TPO login
+    if (selectedRole === 'tpo') {
+      return <TpoLoginPage onLogin={handleLogin} onBack={() => setSelectedRole(null)} />;
+    }
+    // Student login (default)
+    return <LoginPage onLogin={handleLogin} onBack={() => setSelectedRole(null)} />;
+  }
+
+  /* ── If TPO is logged in, show TPO dashboard ────────────────────── */
+  if (user?.role === 'tpo') {
+    return <TpoDashboard token={token} user={user} onLogout={handleLogout} />;
   }
 
   /* ── Render ─────────────────────────────────────────────────────── */
@@ -141,11 +163,18 @@ export default function App() {
           >
             Take Quizzes
           </button>
+          <button
+            className={`nav-link ${activeTab === 'jobs' ? 'active' : ''}`}
+            onClick={() => setActiveTab('jobs')}
+          >
+            Jobs
+          </button>
         </div>
         <div className="nav-right">
           <span className="user-greeting">
             Hello, {user?.name || user?.email || 'User'}
           </span>
+          <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
       </nav>
 
@@ -208,12 +237,14 @@ export default function App() {
 
         {activeTab === 'profile' && (
           <ProfilePage
+            token={token}
             user={user}
-            onUpdate={handleProfileUpdate}
+            onProfileUpdate={handleProfileUpdate}
             onLogout={handleLogout}
           />
         )}
         {activeTab === 'quiz' && <QuizPage />}
+        {activeTab === 'jobs' && <StudentJobs token={token} />}
       </main>
     </div>
   );

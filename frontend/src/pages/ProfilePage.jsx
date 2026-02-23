@@ -7,6 +7,10 @@ export default function ProfilePage({ token, user, onProfileUpdate, onLogout }) 
     const [name, setName] = useState(user?.name || '');
     const [githubUsername, setGithubUsername] = useState(user?.github_username || '');
     const [leetcodeUsername, setLeetcodeUsername] = useState(user?.leetcode_username || '');
+    const [mobileNumber, setMobileNumber] = useState(user?.mobile_number || '');
+    const [cgpa, setCgpa] = useState(user?.cgpa != null ? String(user.cgpa) : '');
+    const [certifications, setCertifications] = useState(user?.certifications || '');
+    const [preferredJobRoles, setPreferredJobRoles] = useState(user?.preferred_job_roles || '');
     const [resumeFile, setResumeFile] = useState(null);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
@@ -15,6 +19,10 @@ export default function ProfilePage({ token, user, onProfileUpdate, onLogout }) 
         setName(user?.name || '');
         setGithubUsername(user?.github_username || '');
         setLeetcodeUsername(user?.leetcode_username || '');
+        setMobileNumber(user?.mobile_number || '');
+        setCgpa(user?.cgpa != null ? String(user.cgpa) : '');
+        setCertifications(user?.certifications || '');
+        setPreferredJobRoles(user?.preferred_job_roles || '');
     }, [user]);
 
     const handleFileChange = (e) => {
@@ -36,6 +44,10 @@ export default function ProfilePage({ token, user, onProfileUpdate, onLogout }) 
             formData.append('name', name.trim());
             formData.append('github_username', githubUsername.trim());
             formData.append('leetcode_username', leetcodeUsername.trim());
+            formData.append('mobile_number', mobileNumber.trim());
+            formData.append('cgpa', cgpa.trim());
+            formData.append('certifications', certifications.trim());
+            formData.append('preferred_job_roles', preferredJobRoles.trim());
             if (resumeFile) {
                 formData.append('resume', resumeFile);
             }
@@ -144,6 +156,59 @@ export default function ProfilePage({ token, user, onProfileUpdate, onLogout }) 
                         value={leetcodeUsername}
                         onChange={(e) => setLeetcodeUsername(e.target.value)}
                     />
+                </div>
+
+                {/* Mobile Number */}
+                <div className="form-group">
+                    <label htmlFor="prof-mobile">Mobile Number</label>
+                    <input
+                        id="prof-mobile"
+                        type="text"
+                        placeholder="e.g. +91-9876543210"
+                        value={mobileNumber}
+                        onChange={(e) => setMobileNumber(e.target.value)}
+                    />
+                </div>
+
+                {/* CGPA */}
+                <div className="form-group">
+                    <label htmlFor="prof-cgpa">CGPA (out of 10)</label>
+                    <input
+                        id="prof-cgpa"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="10"
+                        placeholder="e.g. 8.5"
+                        value={cgpa}
+                        onChange={(e) => setCgpa(e.target.value)}
+                    />
+                </div>
+
+                {/* Certifications */}
+                <div className="form-group">
+                    <label htmlFor="prof-certs">Certifications (comma-separated)</label>
+                    <input
+                        id="prof-certs"
+                        type="text"
+                        placeholder="e.g. AWS Cloud Practitioner, Google Data Analytics"
+                        value={certifications}
+                        onChange={(e) => setCertifications(e.target.value)}
+                    />
+                    <span className="form-hint">Separate multiple certifications with commas</span>
+                </div>
+
+                {/* Preferred Job Roles */}
+                <div className="form-group">
+                    <label htmlFor="prof-roles">Preferred Job Roles (comma-separated)</label>
+                    <input
+                        id="prof-roles"
+                        type="text"
+                        placeholder="e.g. Backend Developer, ML Engineer"
+                        value={preferredJobRoles}
+                        onChange={(e) => setPreferredJobRoles(e.target.value)}
+                    />
+                    <span className="form-hint">Separate multiple roles with commas</span>
                 </div>
 
                 <button type="submit" className="save-btn" disabled={saving}>
