@@ -118,6 +118,24 @@
     margin-top: 0.5rem;
 }
 
+.form-hint {
+    display: block;
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.3rem;
+}
+
+.profile-form input[type="number"] {
+    width: 100%;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid #333;
+    border-radius: 8px;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    font-size: 0.95rem;
+    transition: border-color 0.2s;
+}
+
 .save-btn:hover:not(:disabled) {
     opacity: 0.9;
     transform: translateY(-1px);

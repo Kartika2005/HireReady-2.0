@@ -303,6 +303,31 @@
     }
 }
 
+/* ─── Back link ──────────────────────────────────────────────────────── */
+.login-card .back-link {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin-bottom: 1.25rem;
+    display: inline-block;
+    transition: color 0.2s;
+    padding: 0;
+}
+.login-card .back-link:hover {
+    color: #fff;
+}
+
+/* ─── TPO submit button (pink accent) ────────────────────────────────── */
+.login-btn.tpo-btn {
+    background: linear-gradient(135deg, #ec4899, #f43f5e);
+    box-shadow: 0 4px 12px rgba(236, 72, 153, 0.4);
+}
+.login-btn.tpo-btn:hover:not(:disabled) {
+    box-shadow: 0 8px 20px rgba(236, 72, 153, 0.5);
+}
+
 /* ─── Responsive ─────────────────────────────────────────────────────── */
 @media (max-width: 480px) {
     .login-container {

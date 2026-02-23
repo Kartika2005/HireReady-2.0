@@ -3,7 +3,7 @@ import './LoginPage.css';
 
 const API_BASE = '/api';
 
-export default function LoginPage({ onLogin }) {
+export default function LoginPage({ onLogin, onBack }) {
     const [mode, setMode] = useState('login'); // 'login' | 'register'
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
@@ -74,6 +74,9 @@ export default function LoginPage({ onLogin }) {
             </div>
 
             <div className="login-card">
+                {/* Back button */}
+                {onBack && <button className="back-link" onClick={onBack}>← Back to role selection</button>}
+
                 {/* Toggle */}
                 <div className="auth-toggle">
                     <button
