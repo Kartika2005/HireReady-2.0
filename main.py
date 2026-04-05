@@ -45,19 +45,21 @@ from services.auth import (
     get_current_tpo,
 )
 
+logger_handlers = [logging.StreamHandler()]
+if not os.environ.get("VERCEL"):
+    logger_handlers.append(logging.FileHandler(filename="backend_debug.log"))
+
 # Logger Setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler(filename="backend_debug.log"),
-        logging.StreamHandler()
-    ]
+    handlers=logger_handlers
 )
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 
 # Roadmap skill artifacts (.pkl) may live one level above this folder.
+
 # Prefer current directory, fall back to parent if needed.
 MODEL_DIR = BASE_DIR
 if not (MODEL_DIR / "roadmap_model.pkl").exists():
@@ -544,7 +546,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 FRONTEND_INDEX = FRONTEND_DIST / "index.html"
 FRONTEND_ASSETS = FRONTEND_DIST / "assets"
-UPLOADS_DIR = BASE_DIR / "uploads"
+
+if os.environ.get("VERCEL"):
+    UPLOADS_DIR = Path("/tmp/uploads")
+else:
+    UPLOADS_DIR = BASE_DIR / "uploads"
+
 RESULTS_DIR = UPLOADS_DIR / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
